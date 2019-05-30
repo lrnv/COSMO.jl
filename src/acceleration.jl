@@ -8,7 +8,8 @@ mutable struct AndersonAccelerator{T} <: AbstractAccelerator{T}
   mem::Int64
   dim::Int64
   iter::Int64
-  fail_counter::Int64
+  fail_counter::Array{Int64}
+  cond::Float64
   x_last::AbstractVector{T}
   g_last::AbstractVector{T}
   f::AbstractVector{T}
@@ -20,13 +21,13 @@ mutable struct AndersonAccelerator{T} <: AbstractAccelerator{T}
   M::AbstractMatrix{T}
 
   function AndersonAccelerator{T}() where {T <: Real}
-    new(true, true, 0, 0, 0, 0, zeros(T, 1), zeros(T, 1), zeros(T, 1),  zeros(T, 1), zeros(T, 1), zeros(T, 1, 1), zeros(T, 1, 1), zeros(T, 1, 1), zeros(T, 1, 1))
+    new(true, true, 0, 0, 0, zeros(Int64,0), 0., zeros(T, 1), zeros(T, 1), zeros(T, 1),  zeros(T, 1), zeros(T, 1), zeros(T, 1, 1), zeros(T, 1, 1), zeros(T, 1, 1), zeros(T, 1, 1))
   end
 
-  function AndersonAccelerator{T}(dim::Int64; mem::Int64 = 6, is_type1::Bool = true) where {T <: Real}
+  function AndersonAccelerator{T}(dim::Int64; mem::Int64 = 4, is_type1::Bool = true) where {T <: Real}
     mem <= 0 && throw(DomainError(mem, "Memory has to be a positive integer."))
     dim <= 0 && throw(DomainError(dim, "Dimension has to be a positive integer."))
-    new(is_type1, true, mem, dim, 0, 0, zeros(T,dim), zeros(T, dim), zeros(T, dim),  zeros(T, dim), zeros(T, mem), zeros(T, dim, mem), zeros(T, dim, mem), zeros(T, dim, mem), zeros(T, mem, mem))
+    new(is_type1, true, mem, dim, 0, zeros(Int64,0), 0., zeros(T,dim), zeros(T, dim), zeros(T, dim),  zeros(T, dim), zeros(T, mem), zeros(T, dim, mem), zeros(T, dim, mem), zeros(T, dim, mem), zeros(T, mem, mem))
   end
 
 end
@@ -44,6 +45,7 @@ function empty_history!(aa::AndersonAccelerator{T}) where {T <: Real}
 
   aa.iter = 0
   aa.init_phase = true
+  aa.cond = 0.
 end
 
 
@@ -82,6 +84,7 @@ function update_history!(aa::AbstractAccelerator{T}, g::AbstractVector{T}, x::Ab
   else
     aa.M[:, :] = aa.F' * aa.F
   end
+  aa.cond = cond(aa.M)
 
   # set previous values for next iteration
   @. aa.x_last = x
@@ -102,7 +105,7 @@ function _gesv!(A, B)
   end
 end
 
-function accelerate!(g::AbstractVector{T}, x::AbstractVector{T}, aa::AndersonAccelerator{T}) where {T <: Real}
+function accelerate!(g::AbstractVector{T}, x::AbstractVector{T}, aa::AndersonAccelerator{T}, num_iter) where {T <: Real}
   l = min(aa.iter, aa.mem)
   l < 2 && return true
 
@@ -131,12 +134,10 @@ function accelerate!(g::AbstractVector{T}, x::AbstractVector{T}, aa::AndersonAcc
 
   if (info < 0 || norm(eta, 2) > 1e4)
     #@warn("Acceleration failed at aa.iter: $(aa.iter)")
-    aa.fail_counter += 1
+    push!(aa.fail_counter, num_iter)
     return false
   else
-         # @show(eta)
-
-     g[:] = g - G * eta
+    g[:] = g - G * eta
     return true
   end
 end
@@ -155,6 +156,6 @@ function empty_history!(ea::EmptyAccelerator{<: Real}) where {T <: Real}
   return nothing
 end
 
-function accelerate!(g::AbstractVector{T}, x::AbstractVector{T}, aa::EmptyAccelerator{T}) where {T <: Real}
+function accelerate!(g::AbstractVector{T}, x::AbstractVector{T}, aa::EmptyAccelerator{T}, iter) where {T <: Real}
   return true
 end

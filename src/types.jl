@@ -186,24 +186,26 @@ mutable struct IterateHistory
 	r_dual_data::AbstractVector
 	eta_data::AbstractArray
 	alpha_data::AbstractArray
+	cond_data::AbstractVector
+	aa_fail_data::AbstractVector
 
-	function IterateHistory(m, n)
-		new(zeros(n, 0), zeros(m, 0), zeros(m, 0), zeros(m + n, 0), Float64[], Float64[], zeros(10, 0), zeros(11, 0))
+	function IterateHistory(m, n, mem)
+		new(zeros(n, 0), zeros(m, 0), zeros(m, 0), zeros(m + n, 0), Float64[], Float64[], zeros(mem, 0), zeros(mem + 1, 0), Float64[], Int64[])
 	end
 end
 
-function update_iterate_history!(history::IterateHistory, x, s, y, v, r_prim, r_dual, eta::Vector{Float64})
+function update_iterate_history!(history::IterateHistory, x, s, y, v, r_prim, r_dual, eta::Vector{Float64}, cond::Float64)
 	history.x_data = hcat(history.x_data, x)
 	history.s_data = hcat(history.s_data, s)
 	history.y_data = hcat(history.y_data, y)
 	history.v_data = hcat(history.v_data, v)
+	history.cond_data = push!(history.cond_data, cond)
 	push!(history.r_prim_data, r_prim)
 	push!(history.r_dual_data, r_dual)
 
 	alphas = compute_alphas(eta)
 	history.alpha_data = hcat(history.alpha_data, alphas)
-
-
+	history.eta_data = hcat(history.eta_data, eta)
 end
 
 # -------------------------------------

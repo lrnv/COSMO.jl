@@ -48,6 +48,7 @@ mutable struct Settings
 	obj_true::Float64
 	obj_true_tol::Float64
 	accelerator::Symbol
+	acc_mem::Int64
 	#constructor
 	function Settings(;
 		rho=0.1,
@@ -74,8 +75,9 @@ mutable struct Settings
 		time_limit = 0.0,
 		obj_true = NaN,
 		obj_true_tol = 1e-3,
-		accelerator = :empty
+		accelerator = :empty,
+		acc_mem = 5
 		)
-	new(rho, sigma, alpha/2, eps_abs, eps_rel, eps_prim_inf, eps_dual_inf, max_iter, verbose,  check_termination, check_infeasibility, scaling, MIN_SCALING, MAX_SCALING, adaptive_rho, adaptive_rho_interval, adaptive_rho_tolerance, verbose_timing, RHO_MIN, RHO_MAX, RHO_TOL, time_limit, obj_true, obj_true_tol, accelerator)
+	new(rho, sigma, alpha/2, eps_abs, eps_rel, eps_prim_inf, eps_dual_inf, max_iter, verbose,  check_termination, check_infeasibility, scaling, MIN_SCALING, MAX_SCALING, adaptive_rho, adaptive_rho_interval, adaptive_rho_tolerance, verbose_timing, RHO_MIN, RHO_MAX, RHO_TOL, time_limit, obj_true, obj_true_tol, accelerator, acc_mem)
 end
 end

@@ -1,8 +1,26 @@
 const LinsolveSubarray = SubArray{Float64,1,Vector{Float64},Tuple{UnitRange{Int64}},true}
 
-function admm_step!(x::Vector{Float64},
+function admm_z!(x::Vector{Float64},
 	s::SplitVector{Float64},
 	μ::Vector{Float64},
+	v::Vector{Float64},
+	ρ::Vector{Float64},
+	set::CompositeConvexSet{Float64},
+	v1::SubArray,
+	v2::SubArray)
+
+	@. x = v1
+	@. s = v2
+	p_time = @elapsed project!(s, set)
+
+	# recover original dual variable for conic constraints
+	@. μ = ρ * (v2 - s)
+
+	return p_time
+end
+
+function admm_x!(x::Vector{Float64},
+	s::SplitVector{Float64},
 	v::Vector{Float64},
 	ν::LinsolveSubarray,
 	x_tl::LinsolveSubarray,
@@ -13,11 +31,11 @@ function admm_step!(x::Vector{Float64},
 	q::Vector{Float64},
 	b::Vector{Float64},
 	ρ::Vector{Float64},
-	α::Float64,
 	σ::Float64,
 	m::Int64,
 	n::Int64,
-	set::CompositeConvexSet{Float64}, v1::SubArray, v2::SubArray)
+	v1::SubArray,
+	v2::SubArray)
 
 	# linear solve
 	# Create right hand side for linear system
@@ -25,28 +43,18 @@ function admm_step!(x::Vector{Float64},
 	# x_tl and ν are automatically updated, since they are views on sol
 	# ρ  = 0.1
 
-	@. ls[1:n] = σ * v1 - q # or can it be ρ?????
-	@. ls[(n + 1):end] = b - v2
+	@. ls[1:n] = σ * (2 * x - v1) - q # or can it be ρ?????
+	@. ls[(n + 1):end] = b + v2 - 2*s
 	sol .= F \ ls
 
-	# Over relaxation
-	@. x = 2 * x_tl - v1
-	@. s_tl = v2 - ν / ρ
+	@. s_tl = - ν / ρ + 2 * s - v2
 
-	# Project onto cone
-	@. s = 2 * s_tl - v2
-	p_time = @elapsed project!(s, set)
+	end
 
-	# recover original dual variable for conic constraints
-	@. μ = ρ * (s - v2)
-
+function admm_v!(x::Vector{Float64}, s::SplitVector{Float64}, x_tl::LinsolveSubarray, s_tl::Vector{Float64}, v::Vector{Float64}, α::Float64, m::Int64, n::Int64)
 	# update dual variable v
-	@. v[1:n] = v[1:n] + 2 * α .* ( x - x_tl)
-	@. v[n+1:n+m] = v[n+1:n+m] + 2 * α .* ( s - s_tl)
-
-
-
-	return p_time
+	@. v[1:n] = v[1:n] + 2 * α .* (x_tl - x)
+	@. v[n+1:n+m] = v[n+1:n+m] + 2 * α .* (s_tl - s)
 end
 
 # SOLVER ROUTINE
@@ -81,9 +89,9 @@ function optimize!(ws::COSMO.Workspace)
 	settings.verbose && print_header(ws)
 	time_limit_start = time()
 
- 	# iter_history = IterateHistory(ws.p.m ,ws.p.n)
+ 	iter_history = IterateHistory(ws.p.m ,ws.p.n,settings.acc_mem)
 
-	# update_iterate_history!(iter_history, ws.vars.x, ws.vars.s, -ws.vars.μ, ws.vars.v, ws.r_prim, ws.r_dual, zeros(10))
+ 	update_iterate_history!(iter_history, ws.vars.x, ws.vars.s, -ws.vars.μ, ws.vars.v, ws.r_prim, ws.r_dual, zeros(ws.settings.acc_mem), NaN)
 
 	#preallocate arrays
 	m = ws.p.m
@@ -104,9 +112,9 @@ function optimize!(ws::COSMO.Workspace)
 
 		num_iter += 1
 
-		if num_iter > 1 && num_iter < 300
+		if num_iter > 1
 			COSMO.update_history!(ws.accelerator, ws.vars.v, ws.vars.v_prev)
-			COSMO.accelerate!(ws.vars.v, ws.vars.v_prev, ws.accelerator)
+			COSMO.accelerate!(ws.vars.v, ws.vars.v_prev, ws.accelerator, num_iter)
 		end
 
 		@. ws.vars.v_prev = ws.vars.v
@@ -114,33 +122,18 @@ function optimize!(ws::COSMO.Workspace)
 		@. δy = ws.vars.μ
 
 
-		ws.times.proj_time += admm_step!(
-			ws.vars.x, ws.vars.s, ws.vars.μ, ws.vars.v, ν,
-			x_tl, s_tl, ls, sol,
-			ws.F, ws.p.q, ws.p.b, ws.ρvec,
-			settings.alpha, settings.sigma,
-			m, n, ws.p.C, v1, v2);
+		# perform ADMM update steps
+		ws.times.proj_time += admm_z!(ws.vars.x, ws.vars.s, ws.vars.μ, ws.vars.v, ws.ρvec, ws.p.C, v1, v2)
+
+
 		# compute deltas for infeasibility detection
 		@. δx = ws.vars.x - δx
 		@. δy = -ws.vars.μ + δy
 
-		# @show(ws.vars.v)
-		# @show(ws.vars.s.data)
 		if mod(iter, ws.settings.check_termination )  == 0
 			calculate_residuals!(ws)
 		end
 
-		# eta = zeros(10)
-		# if ws.settings.accelerator == :empty
-		# 	eta = zeros(10)
-		# else
-		# 	eta = ws.accelerator.eta
-		# 	ne = length(eta)
-		# 	if ne < 10
-		# 		eta = [eta; zeros(10-ne)]
-		# 	end
-		# end
-		# update_iterate_history!(iter_history, ws.vars.x, ws.vars.s, -ws.vars.μ, ws.vars.v, ws.r_prim, ws.r_dual, eta)
 
 		# check convergence with residuals every {settings.checkIteration} steps
 		if mod(iter, settings.check_termination) == 0
@@ -177,17 +170,40 @@ function optimize!(ws::COSMO.Workspace)
 		end
 
 
+		# adapt rhoVec if enabled
+		if ws.settings.adaptive_rho && (mod(iter, ws.settings.adaptive_rho_interval + 1) == 0) && (ws.settings.adaptive_rho_interval + 1 > 0)
+			adapt_rho_vec!(ws, iter)
+		end
 
-		if settings.time_limit !=0 &&  (time() - time_limit_start) > settings.time_limit
+
+		eta = zeros(ws.settings.acc_mem)
+		cond = 0.
+		if ws.settings.accelerator == :empty
+			eta = zeros(ws.settings.acc_mem)
+		else
+			eta = ws.accelerator.eta
+			ne = length(eta)
+			if ne < ws.settings.acc_mem
+				eta = [eta; zeros(ws.settings.acc_mem-ne)]
+			end
+			cond = ws.accelerator.cond
+		end
+		 update_iterate_history!(iter_history, ws.vars.x, ws.vars.s, -ws.vars.μ, ws.vars.v, ws.r_prim, ws.r_dual, eta, cond)
+
+
+
+		admm_x!(ws.vars.x, ws.vars.s, ws.vars.v, ν, x_tl, s_tl, ls, sol, ws.F, ws.p.q, ws.p.b, ws.ρvec, settings.sigma, m, n, v1, v2)
+		admm_v!(ws.vars.x, ws.vars.s, x_tl, s_tl, ws.vars.v, settings.alpha, m, n)
+
+	if settings.time_limit !=0 &&  (time() - time_limit_start) > settings.time_limit
 			status = :Time_limit_reached
 			break
 		end
 
 
-		# adapt rhoVec if enabled
-		if ws.settings.adaptive_rho && (mod(iter, ws.settings.adaptive_rho_interval + 1) == 0) && (ws.settings.adaptive_rho_interval + 1 > 0)
-			adapt_rho_vec!(ws, iter)
-		end
+
+
+
 
 	end #END-ADMM-MAIN-LOOP
 
@@ -216,12 +232,11 @@ function optimize!(ws::COSMO.Workspace)
 	res_info = ResultInfo(ws.r_prim, ws.r_dual)
 	y = -ws.vars.μ
 
-	aa_fail = 0
 	if typeof(ws.accelerator) <: AndersonAccelerator{Float64}
-		aa_fail = ws.accelerator.fail_counter
+		iter_history.aa_fail_data = ws.accelerator.fail_counter
 	end
 
-	return Result{Float64}(ws.vars.x, y, ws.vars.s.data, cost, num_iter, status, res_info, ws.times), [ws.r_prim;ws.r_dual], 0
+	return Result{Float64}(ws.vars.x, y, ws.vars.s.data, cost, num_iter, status, res_info, ws.times), ws, iter_history
 
 end
 
